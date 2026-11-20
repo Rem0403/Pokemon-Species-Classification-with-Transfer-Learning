@@ -1,0 +1,10 @@
+# Dataset (downloaded manually from Kaggle, never committed)
+data/
+PokemonData/
+
+# Python virtual environment and caches
+.venv/
+__pycache__/
+
+# Model checkpoints (large binary files)
+*.pt

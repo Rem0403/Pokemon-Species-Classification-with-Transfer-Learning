@@ -10,10 +10,11 @@ from PIL import Image
 
 from data import (ImageDataset, build_transform, find_class_root, load_image,
                   load_splits, make_splits, scan, subsample)
-from models import METHODS, build_model, param_groups, set_train_mode
+from models import ARCHS, METHODS, build_model, head, param_groups, set_train_mode
 from train import run_name, train_run
 from experiments import RUNS, pending_runs, summarize
-from analyze import per_class_accuracy, top_confusions
+from analyze import per_class_accuracy, suspect_labels, top_confusions
+from refine import SINGLE, combined_changes, pick_final, seed_stats
 
 TMP = Path(tempfile.mkdtemp())
 CLASSES = ["Abra", "Alolan Fake", "Mew"]  # "Alolan Fake" has a space, like "Alolan Sandslash"
@@ -180,6 +181,67 @@ def test_train_run_subsample():
     assert met["n_train"] == 15 and met["per_class"] == 5 and met["aug"] is False
 
 
+# ---------- refinement options ----------
+
+def test_archs_head_and_freeze():
+    assert ARCHS == ("resnet18", "resnet50", "efficientnet_b0")
+    for arch in ARCHS:
+        model = build_model("frozen", 7, pretrained=False, arch=arch).eval()
+        assert model(torch.randn(1, 3, 224, 224)).shape == (1, 7)
+        assert head(model).out_features == 7
+        trainable = {id(p) for p in model.parameters() if p.requires_grad}
+        assert trainable == {id(p) for p in head(model).parameters()}, arch
+        ft = build_model("finetune", 7, pretrained=False, arch=arch)
+        g = param_groups(ft, "finetune")
+        assert [x["lr"] for x in g] == [1e-4, 1e-3]
+        assert {id(p) for p in g[1]["params"]} == {id(p) for p in head(ft).parameters()}
+        assert sum(len(x["params"]) for x in g) == len(list(ft.parameters()))
+
+
+def test_rotation_fill_white():
+    torch.manual_seed(0)
+    white = Image.new("RGB", (64, 64), (255, 255, 255))
+    t = build_transform(True, True, fill=255)
+    # every pixel of a white image stays white (no black rotation corners); jitter can't change pure white
+    # by more than brightness*255, so check the normalized value of channel 0 stays near white
+    for _ in range(5):
+        x = t(white)
+        assert x[0].min() > (0.7 - 0.485) / 0.229, x[0].min()
+    xb = build_transform(True, True, fill=0)
+    torch.manual_seed(1)
+    mins = [xb(white)[0].min().item() for _ in range(10)]
+    assert min(mins) < (0.1 - 0.485) / 0.229  # default: black corners appear on at least one rotation
+
+
+def test_train_run_options():
+    sp = splits()
+    a = train_run("finetune", True, None, sp, TMP / "opt", epochs=3, patience=None, batch_size=8,
+                  num_workers=0, pretrained=False, seed=7, label_smoothing=0.1, cosine=True,
+                  rot_fill=255, arch="efficientnet_b0", name="custom")
+    assert a["run"] == "custom" and len(a["history"]) == 3
+    lrs = [h["lr"] for h in a["history"]]
+    assert lrs[0] == 1e-3 and lrs[1] < lrs[0] and lrs[2] < lrs[1]  # head LR decays with cosine
+    assert a["config"] == {"seed": 7, "label_smoothing": 0.1, "cosine": True, "rot_fill": 255,
+                           "arch": "efficientnet_b0", "epochs": 3, "patience": None}
+    assert len(a["test_confidence"]) == len(sp["test"])
+    assert all(0.0 < c <= 1.0 for c in a["test_confidence"])
+    saved = json.loads((TMP / "opt" / "metrics.json").read_text(encoding="utf-8"))
+    assert saved["config"]["arch"] == "efficientnet_b0"
+    b = _quick_run("scratch", "lr_const")
+    assert [h["lr"] for h in b["history"]] == [1e-3]  # no schedule by default
+
+
+def test_seed_sets_init():
+    # A frozen backbone never changes, so its saved weights reveal which seed built the model.
+    train_run("frozen", True, None, splits(), TMP / "s1", epochs=1, batch_size=8, num_workers=0,
+              pretrained=False, seed=1)
+    saved = torch.load(TMP / "s1" / "best.pt")["conv1.weight"]
+    torch.manual_seed(1)
+    assert torch.equal(saved, build_model("frozen", 3, pretrained=False).state_dict()["conv1.weight"])
+    torch.manual_seed(42)
+    assert not torch.equal(saved, build_model("frozen", 3, pretrained=False).state_dict()["conv1.weight"])
+
+
 # ---------- experiments.py / analyze.py ----------
 
 def test_runs_table():
@@ -214,6 +276,60 @@ def test_confusions():
     acc = per_class_accuracy(preds, ["X", "Y", "Z"])
     assert acc[0] == ("Y", 0.0, 1) and acc[-1] == ("Z", 1.0, 1)
     assert ("X", 1 / 3, 3) in acc
+
+
+# ---------- refine.py ----------
+
+def test_combined_changes():
+    val = {"base": 0.90, "noaug": 0.89, "cosine30": 0.91, "smooth": 0.92, "whitefill": 0.95,
+           "effb0": 0.93, "r50": 0.88}
+    ch = combined_changes(val)
+    assert ch == {"arch": "efficientnet_b0", "cosine": True, "epochs": 30, "patience": None,
+                  "label_smoothing": 0.1, "rot_fill": 255}
+    # augmentation off wins -> rotation fill is meaningless and dropped; base arch kept
+    val2 = {**val, "noaug": 0.99, "effb0": 0.5, "whitefill": 0.95}
+    assert combined_changes(val2) == {"aug": False, "cosine": True, "epochs": 30, "patience": None,
+                                      "label_smoothing": 0.1}
+    assert combined_changes({k: (1.0 if k == "base" else 0.1) for k in SINGLE}) == {}
+
+
+def test_pick_final_and_stats():
+    assert pick_final({"base": 0.9, "smooth": 0.93, "combined": 0.92}) == "smooth"
+    mean, std = seed_stats([0.90, 0.92, 0.94])
+    assert abs(mean - 0.92) < 1e-12 and abs(std - 0.02) < 1e-12
+    assert seed_stats([0.5]) == (0.5, 0.0)
+
+
+def test_suspect_labels():
+    m = {"classes": ["X", "Y"],
+         "test_predictions": [["a", 0, 1], ["b", 0, 1], ["c", 1, 1], ["d", 1, 0]],
+         "test_confidence": [0.95, 0.60, 0.99, 0.97]}
+    assert suspect_labels(m, 0.9) == [("d", "Y", "X", 0.97), ("a", "X", "Y", 0.95)]
+
+
+def test_confused_classes():
+    from analyze import confused_classes
+    preds = [["a", 0, 1], ["b", 0, 1], ["c", 3, 2], ["f", 3, 2], ["d", 4, 4], ["e", 1, 0]]
+    assert confused_classes(preds, n=2) == [0, 1, 2, 3]  # every class in the top-2 pairs, sorted
+    assert confused_classes(preds, n=1) == [0, 1]
+
+
+def test_predict_image():
+    from predict import predict_image
+    model = build_model("scratch", len(CLASSES), pretrained=False)
+    img = class_root() / "Abra" / "0.jpg"
+    top = predict_image(img, model, CLASSES, torch.device("cpu"), k=5)
+    assert len(top) == 3  # k is capped at the number of classes
+    assert sorted(n for n, _ in top) == sorted(CLASSES)
+    probs = [p for _, p in top]
+    assert probs == sorted(probs, reverse=True) and abs(sum(probs) - 1) < 1e-5
+
+
+def test_refine_charts():
+    from refine import plot_configs, plot_long
+    plot_configs({"base": (0.94, 0.003), "cosine30": (0.95, 0.002)}, TMP / "cfg.png")
+    plot_long({"scratch, aug": (0.41, 0.57), "frozen, aug": (0.72, 0.75)}, TMP / "long.png")
+    assert (TMP / "cfg.png").stat().st_size > 0 and (TMP / "long.png").stat().st_size > 0
 
 
 if __name__ == "__main__":

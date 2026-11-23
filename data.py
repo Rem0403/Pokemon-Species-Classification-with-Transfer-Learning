@@ -106,13 +106,16 @@ def subsample(items: list, k: int | None, seed: int = SEED) -> list:
     return [item for i, item in enumerate(items) if i in keep]
 
 
-def build_transform(train: bool, aug: bool) -> transforms.Compose:
-    """224x224 + ImageNet normalization; random augmentation only for training with aug on."""
+def build_transform(train: bool, aug: bool, fill: int = 0) -> transforms.Compose:
+    """224x224 + ImageNet normalization; random augmentation only for training with aug on.
+
+    fill: color of the corners uncovered by rotation (0 = black, 255 = white).
+    """
     if train and aug:
         steps = [
             transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(15),
+            transforms.RandomRotation(15, fill=fill),
             # No hue jitter: color is a main clue for telling species apart.
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         ]

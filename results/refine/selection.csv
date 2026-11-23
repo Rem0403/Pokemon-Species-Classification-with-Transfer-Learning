@@ -1,0 +1,9 @@
+config,changes,val_top1_mean,val_top1_std,best_epochs
+cosine30,"{""cosine"": true, ""epochs"": 30, ""patience"": null}",0.9527,0.0028,26 23 29
+combined,"{""arch"": ""efficientnet_b0"", ""aug"": false, ""cosine"": true, ""epochs"": 30, ""patience"": null}",0.9491,0.0029,16 22 25
+noaug,"{""aug"": false}",0.9478,0.0031,8 13 16
+effb0,"{""arch"": ""efficientnet_b0""}",0.9465,0.0040,8 13 8
+whitefill,"{""rot_fill"": 255}",0.9425,0.0015,12 5 8
+base,{},0.9425,0.0034,8 11 7
+smooth,"{""label_smoothing"": 0.1}",0.9425,0.0030,11 10 11
+r50,"{""arch"": ""resnet50""}",0.9357,0.0031,3 5 5

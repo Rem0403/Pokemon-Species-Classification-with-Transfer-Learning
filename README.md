@@ -41,7 +41,9 @@ Without an NVIDIA GPU, install torch with plain `pip install torch torchvision`.
 | `.venv\Scripts\python test_smoke.py` | Quick self-check on a tiny fake dataset (about 1 min) | prints `ALL PASSED` |
 | `.venv\Scripts\python inspect_data.py` | Counts images per class, lists bad files and duplicates, saves 20 random images | `results/sample_grid.png` |
 | `.venv\Scripts\python experiments.py` | Trains all 11 runs (about 1–2 h on a GTX 1660 Ti). Finished runs are skipped, so it can be restarted. | `results/<run>/`, `results/summary.csv`, 3 charts |
-| `.venv\Scripts\python analyze.py` | Error analysis on the best all-data run (`--run <name>` to pick another) | `results/analysis/` |
+| `.venv\Scripts\python analyze.py` | Error analysis on the best all-data run (`--run refine/cosine30_s42` for the final model) | `results/analysis/<run>/` |
+| `.venv\Scripts\python refine.py` | Optional. Tries changes to the fine-tuned model (3 seeds each, picked on validation only), retrains scratch/frozen for up to 60 epochs, and lists likely mislabeled test images (several hours, restartable) | `results/refine/`, see `FINDINGS.md` |
+| `.venv\Scripts\python predict.py <image> ...` | Names the Pokémon in your own images: top-5 species with confidence (final model by default) | printed |
 
 To train a single configuration, for example: `.venv\Scripts\python train.py --method finetune --aug on --per-class 10`
 
@@ -61,7 +63,9 @@ To train a single configuration, for example: `.venv\Scripts\python train.py --m
 | `models.py` | The three models, their learning rates, and the frozen model's eval mode |
 | `train.py` | Trains one run: AdamW, batch 32, up to 20 epochs, early stopping (patience 5) on validation accuracy. Then tests it. |
 | `experiments.py` | Runs all 11 experiments and builds `summary.csv` and the charts |
-| `analyze.py` | Confusion matrix, most-confused pairs (with pictures), and per-class accuracy |
+| `analyze.py` | Confusion matrix (full and zoomed on the most-confused species), most-confused pairs (with pictures), and per-class accuracy |
+| `predict.py` | Top-5 prediction for any image, for demos |
+| `refine.py` | Refinement experiments: seeds, learning-rate schedule, label smoothing, other backbones, longer training, label audit |
 | `inspect_data.py` | Dataset statistics and a sample image grid |
 | `test_smoke.py` | Self-check |
 
@@ -79,7 +83,8 @@ To train a single configuration, for example: `.venv\Scripts\python train.py --m
 
 ## Known limits
 
-- Each configuration runs once with one seed, so there are no error bars.
-- No learning-rate schedule or hyperparameter search: the settings are the proposal's starting values.
+- Each of the 11 main configurations runs once with one seed, so there are no error bars. `refine.py` repeats the fine-tuned runs over 3 seeds: the seed alone moves test top-1 by about ±0.5 points.
+- The 11 main runs use the proposal's starting values (no learning-rate schedule). `refine.py` tests a small set of changes; there is no broad hyperparameter search.
+- GPU training is not bit-for-bit reproducible (cuDNN), so a rerun can differ by a few tenths of a point.
 - "20 per class" is capped by the smallest classes (as low as 17–18 training images). The data-amount chart's x-axis therefore shows the mean number of images per class actually used.
 - Only exact duplicates are detected. Near-duplicates (resized or re-encoded copies of the same picture) may still sit in different splits.

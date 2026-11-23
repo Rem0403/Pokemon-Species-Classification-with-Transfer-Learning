@@ -5,6 +5,7 @@ Example: .venv/Scripts/python train.py --method finetune --aug on --per-class al
 import argparse
 import copy
 import json
+import os
 import random
 from pathlib import Path
 
@@ -58,31 +59,39 @@ def save_curves(history: list[dict], path: Path, title: str) -> None:
 
 
 def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_dir: Path,
-              epochs: int = 20, patience: int = 5, batch_size: int = 32, num_workers: int = 4,
-              pretrained: bool = True) -> dict:
-    """Train one model with early stopping on validation top-1, then score it on the test set."""
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
+              epochs: int = 20, patience: int | None = 5, batch_size: int = 32, num_workers: int = 4,
+              pretrained: bool = True, seed: int = SEED, arch: str = "resnet18",
+              label_smoothing: float = 0.0, cosine: bool = False, rot_fill: int = 0,
+              name: str | None = None) -> dict:
+    """Train one model, keep the epoch with the best validation top-1, then score it on the test set.
+
+    patience=None trains all epochs. cosine=True lowers every learning rate along a cosine curve
+    to ~0 by the last epoch. The defaults reproduce the original 11 experiments.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     num_classes = len(splits["classes"])
-    model = build_model(method, num_classes, pretrained)  # right after seeding: same init every time
+    model = build_model(method, num_classes, pretrained, arch)  # right after seeding: same init per seed
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     train_items = subsample(splits["train"], per_class)
     loader_kw = dict(batch_size=batch_size, num_workers=num_workers,
                      pin_memory=device.type == "cuda", persistent_workers=num_workers > 0)
-    train_loader = DataLoader(ImageDataset(train_items, build_transform(True, aug)), shuffle=True,
-                              generator=torch.Generator().manual_seed(SEED), **loader_kw)
+    train_loader = DataLoader(ImageDataset(train_items, build_transform(True, aug, rot_fill)), shuffle=True,
+                              generator=torch.Generator().manual_seed(seed), **loader_kw)
     val_loader = DataLoader(ImageDataset(splits["val"], build_transform(False, aug)), **loader_kw)
     test_loader = DataLoader(ImageDataset(splits["test"], build_transform(False, aug)), **loader_kw)
 
     optimizer = torch.optim.AdamW(param_groups(model, method))
-    loss_fn = nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs) if cosine else None
+    loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     history, best_val, best_epoch, best_state, waited = [], -1.0, 0, None, 0
-    name = run_name(method, aug, per_class)
+    name = name or run_name(method, aug, per_class)
 
     for epoch in range(1, epochs + 1):
+        lr = optimizer.param_groups[-1]["lr"]  # the new head's learning rate this epoch
         set_train_mode(model, method)
         total_loss = 0.0
         for x, y in train_loader:
@@ -92,8 +101,11 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * len(y)
+        if scheduler:
+            scheduler.step()
         val_top1 = topk_accuracy(*predict(model, val_loader, device), 1)
-        history.append({"epoch": epoch, "train_loss": total_loss / len(train_items), "val_top1": val_top1})
+        history.append({"epoch": epoch, "train_loss": total_loss / len(train_items), "val_top1": val_top1,
+                        "lr": lr})
         print(f"[{name}] epoch {epoch:2d}  loss {history[-1]['train_loss']:.3f}  val top-1 {val_top1:.3f}",
               flush=True)
         if val_top1 > best_val:
@@ -101,7 +113,7 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
             best_state = copy.deepcopy({k: v.cpu() for k, v in model.state_dict().items()})
         else:
             waited += 1
-            if waited >= patience:
+            if patience is not None and waited >= patience:
                 print(f"[{name}] early stop: no improvement for {patience} epochs", flush=True)
                 break
 
@@ -114,6 +126,8 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
     preds = logits.argmax(dim=1)
     metrics = {
         "run": name, "method": method, "aug": aug, "per_class": per_class,
+        "config": {"seed": seed, "label_smoothing": label_smoothing, "cosine": cosine,
+                   "rot_fill": rot_fill, "arch": arch, "epochs": epochs, "patience": patience},
         "n_train": len(train_items), "history": history, "best_epoch": best_epoch,
         "val_top1": best_val,
         "test_top1": topk_accuracy(logits, y_true, 1),
@@ -123,10 +137,15 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
         "classes": splits["classes"],
         "test_predictions": [[p, int(t), int(q)] for (p, _), t, q
                              in zip(splits["test"], y_true.tolist(), preds.tolist())],
+        # model's confidence (softmax probability) in its own answer, per test image
+        "test_confidence": logits.softmax(dim=1).max(dim=1).values.tolist(),
     }
-    (out_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=1),
-                                          encoding="utf-8")
     save_curves(history, out_dir / "curves.png", name)
+    # metrics.json marks a run as finished, so write it last and atomically (temp file + rename):
+    # an interrupted run never leaves a half-written metrics.json behind.
+    tmp = out_dir / "metrics.json.tmp"
+    tmp.write_text(json.dumps(metrics, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, out_dir / "metrics.json")
     print(f"[{name}] TEST top-1 {metrics['test_top1']:.3f}  top-5 {metrics['test_top5']:.3f}  "
           f"macro-F1 {metrics['test_macro_f1']:.3f}  (best epoch {best_epoch})", flush=True)
     return metrics

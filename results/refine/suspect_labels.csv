@@ -1,0 +1,12 @@
+path,label,model_says,confidence
+data/PokemonData/Mankey/877bfc365a0b4c8eb8f4bd5e7f63cff9.jpeg,Mankey,Primeape,1.000
+data/PokemonData/Pidgeot/d203cb0958144a8ead60b7ce7077cd03.jpg,Pidgeot,Pidgeotto,1.000
+data/PokemonData/Rapidash/dc30cf658b204f719e0882c5f07a7813.jpg,Rapidash,Ponyta,1.000
+data/PokemonData/Cubone/c3d731b58f1d4f89a317bf2fa5a21b32.jpg,Cubone,Marowak,0.999
+data/PokemonData/Golbat/0ae879ee1e1945928ea6b016142bcdc8.jpg,Golbat,Zubat,0.997
+data/PokemonData/Krabby/6af7374e57c04919ace2509e816c58e9.jpg,Krabby,Kingler,0.995
+data/PokemonData/Dewgong/9e119368d24e4c1db58c20daf1452966.jpg,Dewgong,Seel,0.995
+data/PokemonData/Venusaur/caca9ce6f70d4af3895096b1730ab44c.jpg,Venusaur,Ivysaur,0.991
+data/PokemonData/Poliwhirl/d843aea788dd48f586ffdf8736dd3c4c.jpg,Poliwhirl,Poliwrath,0.973
+data/PokemonData/Weedle/26e292e5de8e4fc489bda4cce3ab8a9e.jpg,Weedle,Kakuna,0.905
+data/PokemonData/Pidgeotto/17981e80c3a548ff992687345f64c7b7.jpg,Pidgeotto,Pidgey,0.903

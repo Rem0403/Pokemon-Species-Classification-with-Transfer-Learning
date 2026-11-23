@@ -25,14 +25,14 @@ After cleaning, 6,808 images remain across 150 classes (25–66 per class). The 
 
 The split is a stratified 70/15/15 (train 4,765 / val 1,021 / test 1,022, seed 42). It is saved in `splits.json` so every experiment uses the same test images.
 
-## Setup (Windows, NVIDIA GPU)
+## Setup (Windows)
 
 ```
 py -3.12 -m venv .venv
-.venv\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+.venv\Scripts\python -m pip install torch torchvision
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
-Without an NVIDIA GPU, install torch with plain `pip install torch torchvision`. Everything still runs, but on the CPU, which is much slower.
+If the laptop has an NVIDIA GPU, add `--index-url https://download.pytorch.org/whl/cu126` to the torch line. If not, the plain line runs on the CPU, which is fine for scanning one picture at a time (training is much slower without a GPU).
 
 ## Run, in this order
 

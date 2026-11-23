@@ -19,8 +19,12 @@ from PIL import Image, ImageTk
 
 from predict import load_trained, predict_image
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model, classes = load_trained("refine/cosine30_s42", device)
+try:  # use the gpu if it actually works, cuda can say it's available and then fail (old driver etc)
+    device = torch.device("cuda")
+    model, classes = load_trained("refine/cosine30_s42", device)
+except (RuntimeError, AssertionError):
+    device = torch.device("cpu")
+    model, classes = load_trained("refine/cosine30_s42", device)
 
 RED, RED_DARK, EDGE = "#dc1c1c", "#a00000", "#5a0000"
 LCD_INK = "#40ff60"
@@ -29,19 +33,27 @@ PROMPT = "PRESS THE YELLOW\nBUTTON TO SCAN"
 
 
 def to_pixels(path) -> Image.Image:
-    """pixelated 32 color version for the screen, transparent parts show the screen blue"""
+    """pixelated 32 color version for the screen (small, gets blown up when drawn), transparent parts show the screen blue"""
     with Image.open(path) as im:
         rgba = im.convert("RGBA")
     img = Image.alpha_composite(Image.new("RGBA", rgba.size, SCREEN_BLUE + (255,)), rgba).convert("RGB")
     img.thumbnail((56, 56))
-    return img.quantize(32).convert("RGB").resize((img.width * 2, img.height * 2), Image.NEAREST)
+    return img.quantize(32).convert("RGB")
 
+
+BASE_W, BASE_H = 600, 400  # everything below is drawn in these coords, then scaled to fit the window
+view = {"s": 1.0, "ox": 0.0, "oy": 0.0}
 
 root = tk.Tk()
 root.title("Species Scanner")
-root.resizable(False, False)
-c = tk.Canvas(root, width=600, height=400, bg="#26262e", highlightthickness=0)
-c.pack()
+root.minsize(BASE_W // 2, BASE_H // 2)
+c = tk.Canvas(root, width=BASE_W, height=BASE_H, bg="#26262e", highlightthickness=0)
+c.pack(fill="both", expand=True)
+
+
+def at(x, y):
+    """base coords -> current window coords"""
+    return x * view["s"] + view["ox"], y * view["s"] + view["oy"]
 
 # left side
 c.create_polygon(20, 20, 170, 20, 200, 60, 290, 60, 290, 380, 20, 380, fill=RED, outline=EDGE, width=3)
@@ -93,29 +105,72 @@ c.create_rectangle(335, 325, 425, 355, fill="#333", outline="black")
 c.create_rectangle(470, 325, 560, 355, fill="#333", outline="black")
 
 
+# remember the original font sizes and line widths so they can be scaled with the window
+base_fonts, base_widths = {}, {}
+for item in c.find_all():
+    kind = c.type(item)
+    if kind == "text":
+        family, size, *style = root.tk.splitlist(c.itemcget(item, "font"))
+        base_fonts[item] = (family, int(size), *style)
+    elif kind != "image":
+        base_widths[item] = float(c.itemcget(item, "width"))
+
+c.pixels = None  # small pixelated image currently on the screen
+
+
+def draw_pixels():
+    if c.pixels is None:
+        c.itemconfig(screen_img, image="")
+        return
+    k = 2 * view["s"]
+    big = c.pixels.resize((max(1, round(c.pixels.width * k)), max(1, round(c.pixels.height * k))), Image.NEAREST)
+    c.photo = ImageTk.PhotoImage(big)  # need to keep a reference or tkinter drops the image
+    c.itemconfig(screen_img, image=c.photo)
+
+
+def on_resize(event):
+    s = min(event.width / BASE_W, event.height / BASE_H)
+    ox, oy = (event.width - BASE_W * s) / 2, (event.height - BASE_H * s) / 2
+    c.move("all", -view["ox"], -view["oy"])
+    c.scale("all", 0, 0, s / view["s"], s / view["s"])
+    c.move("all", ox, oy)
+    view.update(s=s, ox=ox, oy=oy)
+    for item, (family, size, *style) in base_fonts.items():
+        c.itemconfig(item, font=(family, max(1, round(size * s)), *style))
+    for item, width in base_widths.items():
+        c.itemconfig(item, width=width * s)
+    draw_pixels()
+
+
 def scan(_=None):
     path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("All files", "*.*")])
     if not path:
         return
-    photo = ImageTk.PhotoImage(to_pixels(path))
-    c.itemconfig(screen_img, image=photo)
-    c.photo = photo  # need to keep a reference or tkinter drops the image
+    c.pixels = to_pixels(path)
+    draw_pixels()
     top = predict_image(path, model, classes, device)
     c.itemconfig(name_box, text=top[0][0].upper()[:12])
-    c.coords(screen_text, 345, 128)
+    c.coords(screen_text, *at(345, 128))
     c.itemconfig(screen_text, anchor="w", justify="left",
                  text="\n".join(f"{name.upper()[:14]:<14}{p:7.1%}" for name, p in top))
 
 
 def clear(_=None):
-    c.itemconfig(screen_img, image="")
+    c.pixels = None
+    draw_pixels()
     c.itemconfig(name_box, text="")
-    c.coords(screen_text, 445, 128)
+    c.coords(screen_text, *at(445, 128))
     c.itemconfig(screen_text, anchor="center", justify="center", text=PROMPT)
 
 
+def toggle_fullscreen(_=None):
+    root.attributes("-fullscreen", not root.attributes("-fullscreen"))
+
+
+c.bind("<Configure>", on_resize)
 c.tag_bind("scan", "<Button-1>", scan)
 c.tag_bind("clear", "<Button-1>", clear)
 root.bind("<Return>", scan)
 root.bind("<Escape>", clear)
+root.bind("<F11>", toggle_fullscreen)
 root.mainloop()

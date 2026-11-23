@@ -1,4 +1,4 @@
-"""Dataset handling: find images, drop broken files and duplicates, split, load."""
+"""dataset stuff: find the images, drop broken files and duplicates, split, load"""
 import hashlib
 import json
 import random
@@ -18,10 +18,8 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
 def find_class_root(data_dir: Path) -> Path:
-    """Return the shallowest folder whose subfolders (>= 2) each directly hold files.
-
-    Works whether the zip unpacked to data/PokemonData or data/archive/PokemonData.
-    """
+    """finds the folder that has the class folders in it. works whether the zip unzipped to
+    data/PokemonData or data/archive/PokemonData"""
     queue = deque([Path(data_dir)])
     while queue:
         d = queue.popleft()
@@ -33,7 +31,7 @@ def find_class_root(data_dir: Path) -> Path:
 
 
 def load_image(path) -> Image.Image:
-    """Open any image as RGB. Transparent areas become white, not black."""
+    """opens any image as RGB. transparent parts turn white instead of black"""
     with Image.open(path) as im:
         if im.has_transparency_data:
             rgba = im.convert("RGBA")
@@ -43,17 +41,15 @@ def load_image(path) -> Image.Image:
 
 
 def scan(class_root: Path) -> dict:
-    """List usable images with labels; skip unreadable files; keep one copy of exact duplicates.
-
-    Duplicates found under two different species are dropped entirely (no single correct label).
-    """
+    """usable images + labels. skips files that won't open and keeps one copy of exact duplicates.
+    if the same pic shows up under two species every copy gets dropped since there's no right label"""
     classes = sorted(p.name for p in Path(class_root).iterdir() if p.is_dir())
     skipped, by_hash = [], {}
     for label, name in enumerate(classes):
         for f in sorted(p for p in (Path(class_root) / name).iterdir() if p.is_file()):
             path = f.as_posix()
             try:
-                load_image(f)  # full decode: catches non-images and truncated files
+                load_image(f)  # actually decode it so broken/truncated files get caught
             except Exception:
                 skipped.append(path)
                 continue
@@ -61,16 +57,15 @@ def scan(class_root: Path) -> dict:
             by_hash.setdefault(digest, []).append((path, label))
     items = []
     for group in by_hash.values():
-        if len({label for _, label in group}) == 1:  # keep the first copy
+        if len({label for _, label in group}) == 1:
             items.append(list(group[0]))
-        # else: the same picture is filed under two species -> label is ambiguous, drop all copies
     items.sort()
     duplicates = [[p for p, _ in group] for group in by_hash.values() if len(group) > 1]
     return {"classes": classes, "items": items, "skipped": skipped, "duplicates": duplicates}
 
 
 def make_splits(data_dir: Path = DATA_DIR, seed: int = SEED) -> dict:
-    """Stratified 70/15/15 split of the deduplicated images."""
+    """stratified 70/15/15 split"""
     s = scan(find_class_root(data_dir))
     items = s["items"]
     train, rest = train_test_split(items, test_size=0.30, random_state=seed,
@@ -82,7 +77,7 @@ def make_splits(data_dir: Path = DATA_DIR, seed: int = SEED) -> dict:
 
 
 def load_splits(data_dir: Path = DATA_DIR, path: Path = SPLITS_PATH, seed: int = SEED) -> dict:
-    """Read the saved split, or create and save it once so every run uses the same one."""
+    """loads the saved split or makes it once so every run uses the same test images"""
     path = Path(path)
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
@@ -92,7 +87,6 @@ def load_splits(data_dir: Path = DATA_DIR, path: Path = SPLITS_PATH, seed: int =
 
 
 def subsample(items: list, k: int | None, seed: int = SEED) -> list:
-    """Keep at most k items per class (all of them if a class has fewer). Order is preserved."""
     if k is None:
         return items
     rng = random.Random(seed)
@@ -107,16 +101,14 @@ def subsample(items: list, k: int | None, seed: int = SEED) -> list:
 
 
 def build_transform(train: bool, aug: bool, fill: int = 0) -> transforms.Compose:
-    """224x224 + ImageNet normalization; random augmentation only for training with aug on.
-
-    fill: color of the corners uncovered by rotation (0 = black, 255 = white).
-    """
+    """224x224 + imagenet normalization, augmentation only when training with aug on.
+    fill is the color of the corners rotation leaves behind (0 black, 255 white)"""
     if train and aug:
         steps = [
             transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
             transforms.RandomHorizontalFlip(),
             transforms.RandomRotation(15, fill=fill),
-            # No hue jitter: color is a main clue for telling species apart.
+            # no hue jitter, color is one of the main ways to tell species apart
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         ]
     else:
@@ -126,7 +118,6 @@ def build_transform(train: bool, aug: bool, fill: int = 0) -> transforms.Compose
 
 
 class ImageDataset(Dataset):
-    """Turns a list of [path, label] into (image tensor, label) pairs."""
 
     def __init__(self, items: list, transform):
         self.items = items

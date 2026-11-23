@@ -1,4 +1,4 @@
-"""Quick self-check on a tiny fake dataset. Run: .venv/Scripts/python test_smoke.py"""
+"""quick self check on a tiny fake dataset. run: .venv/Scripts/python test_smoke.py"""
 import functools
 import json
 import shutil
@@ -17,27 +17,26 @@ from analyze import per_class_accuracy, suspect_labels, top_confusions
 from refine import SINGLE, combined_changes, pick_final, seed_stats
 
 TMP = Path(tempfile.mkdtemp())
-CLASSES = ["Abra", "Alolan Fake", "Mew"]  # "Alolan Fake" has a space, like "Alolan Sandslash"
+CLASSES = ["Abra", "Alolan Fake", "Mew"]  # has a space like "Alolan Sandslash"
 
 
 @functools.cache
 def fake_root() -> Path:
-    """TMP/fake/archive/PokemonData/<class>/... with tricky files mixed in."""
     root = TMP / "fake"
     class_root = root / "archive" / "PokemonData"
     for c, name in enumerate(CLASSES):
         d = class_root / name
         d.mkdir(parents=True)
-        for i in range(20):  # every image a different color -> no accidental duplicates
+        for i in range(20):  # each image a different color so no accidental duplicates
             Image.new("RGB", (32, 32), (c * 80, i * 12, 100)).save(d / f"{i}.jpg")
     abra, mew = class_root / "Abra", class_root / "Mew"
-    Image.new("RGB", (32, 32), (250, 1, 1)).save(abra / "pokémon_0.jpg")  # non-ASCII name
+    Image.new("RGB", (32, 32), (250, 1, 1)).save(abra / "pokémon_0.jpg")  # non-ascii name
     shutil.copy(abra / "0.jpg", abra / "dup.jpg")  # exact duplicate, same class
     shutil.copy(abra / "1.jpg", mew / "also_abra.jpg")  # same image under two species
     rgba = Image.new("RGBA", (32, 32), (0, 0, 255, 255))
     rgba.putpixel((0, 0), (0, 0, 0, 0))  # one fully transparent pixel
     rgba.save(mew / "clear.png")
-    (mew / "broken.svg").write_text("<svg></svg>")  # not loadable by Pillow
+    (mew / "broken.svg").write_text("<svg></svg>")  # pillow can't load this
     return root
 
 
@@ -50,7 +49,6 @@ def splits() -> dict:
     return make_splits(fake_root())
 
 
-# ---------- data.py ----------
 
 def test_find_class_root_wrapper():
     assert find_class_root(fake_root()).name == "PokemonData"
@@ -61,12 +59,12 @@ def test_scan():
     assert s["classes"] == CLASSES
     assert any(p.endswith("broken.svg") for p in s["skipped"])
     assert len(s["duplicates"]) == 2 and all(len(g) == 2 for g in s["duplicates"])
-    # 60 colors + pokémon_0.jpg + clear.png = 62; dup.jpg removed; svg skipped;
-    # Abra/1.jpg and Mew/also_abra.jpg both dropped (label is ambiguous) -> 61
+    # 60 colors + pokémon_0.jpg + clear.png = 62, dup.jpg removed, svg skipped,
+    # Abra/1.jpg and Mew/also_abra.jpg both dropped (ambiguous label) -> 61
     assert len(s["items"]) == 61
     paths = [p for p, _ in s["items"]]
     assert not any(p.endswith(("dup.jpg", "Abra/1.jpg", "also_abra.jpg")) for p in paths)
-    assert any(p.endswith("Abra/0.jpg") for p in paths)  # first copy of same-class dup kept
+    assert any(p.endswith("Abra/0.jpg") for p in paths)  # first copy of the same class dup is kept
 
 
 def test_load_image_modes():
@@ -78,7 +76,7 @@ def test_load_image_modes():
     clear = class_root() / "Mew" / "clear.png"
     for path in (clear, TMP / "p.png", TMP / "gray.png"):
         assert load_image(path).mode == "RGB"
-    assert load_image(clear).getpixel((0, 0)) == (255, 255, 255)  # transparent -> white
+    assert load_image(clear).getpixel((0, 0)) == (255, 255, 255)
     assert load_image(clear).getpixel((5, 5)) == (0, 0, 255)
     assert load_image(TMP / "p.png").getpixel((0, 0)) == (255, 255, 255)
 
@@ -112,7 +110,6 @@ def test_dataset_tensor():
     assert tuple(x.shape) == (3, 224, 224) and isinstance(y, int)
 
 
-# ---------- models.py ----------
 
 def test_models_shapes():
     for m in METHODS:
@@ -140,7 +137,6 @@ def test_param_groups():
     assert [g["lr"] for g in fz] == [1e-3] and len(fz[0]["params"]) == 2
 
 
-# ---------- train.py ----------
 
 def _quick_run(method: str, out: str, **kw) -> dict:
     return train_run(method, True, None, splits(), TMP / out, epochs=1, batch_size=8,
@@ -158,7 +154,7 @@ def test_train_run_all_methods():
         saved = json.loads((TMP / m / "metrics.json").read_text(encoding="utf-8"))
         for k in ("test_top1", "test_top5", "test_macro_f1", "val_top1"):
             assert 0.0 <= saved[k] <= 1.0, (k, saved[k])
-        assert saved["test_top5"] == 1.0  # 3 classes -> top-k uses k=3, always hits
+        assert saved["test_top5"] == 1.0  # only 3 classes so top-5 always hits
         assert len(saved["test_predictions"]) == len(splits()["test"])
         assert saved["n_train"] == len(splits()["train"]) and saved["best_epoch"] == 1
         assert saved["classes"] == CLASSES and len(saved["history"]) == 1
@@ -181,7 +177,6 @@ def test_train_run_subsample():
     assert met["n_train"] == 15 and met["per_class"] == 5 and met["aug"] is False
 
 
-# ---------- refinement options ----------
 
 def test_archs_head_and_freeze():
     assert ARCHS == ("resnet18", "resnet50", "efficientnet_b0")
@@ -202,15 +197,15 @@ def test_rotation_fill_white():
     torch.manual_seed(0)
     white = Image.new("RGB", (64, 64), (255, 255, 255))
     t = build_transform(True, True, fill=255)
-    # every pixel of a white image stays white (no black rotation corners); jitter can't change pure white
-    # by more than brightness*255, so check the normalized value of channel 0 stays near white
+    # a white image should stay white (no black rotation corners). jitter can't move pure white
+    # more than brightness*255 so just check channel 0 stays close to white
     for _ in range(5):
         x = t(white)
         assert x[0].min() > (0.7 - 0.485) / 0.229, x[0].min()
     xb = build_transform(True, True, fill=0)
     torch.manual_seed(1)
     mins = [xb(white)[0].min().item() for _ in range(10)]
-    assert min(mins) < (0.1 - 0.485) / 0.229  # default: black corners appear on at least one rotation
+    assert min(mins) < (0.1 - 0.485) / 0.229  # default fill: black corners show up on at least one rotation
 
 
 def test_train_run_options():
@@ -220,7 +215,7 @@ def test_train_run_options():
                   rot_fill=255, arch="efficientnet_b0", name="custom")
     assert a["run"] == "custom" and len(a["history"]) == 3
     lrs = [h["lr"] for h in a["history"]]
-    assert lrs[0] == 1e-3 and lrs[1] < lrs[0] and lrs[2] < lrs[1]  # head LR decays with cosine
+    assert lrs[0] == 1e-3 and lrs[1] < lrs[0] and lrs[2] < lrs[1]  # head lr goes down with cosine
     assert a["config"] == {"seed": 7, "label_smoothing": 0.1, "cosine": True, "rot_fill": 255,
                            "arch": "efficientnet_b0", "epochs": 3, "patience": None}
     assert len(a["test_confidence"]) == len(sp["test"])
@@ -232,7 +227,7 @@ def test_train_run_options():
 
 
 def test_seed_sets_init():
-    # A frozen backbone never changes, so its saved weights reveal which seed built the model.
+    # frozen backbone never changes so its saved weights show which seed built the model
     train_run("frozen", True, None, splits(), TMP / "s1", epochs=1, batch_size=8, num_workers=0,
               pretrained=False, seed=1)
     saved = torch.load(TMP / "s1" / "best.pt")["conv1.weight"]
@@ -242,7 +237,6 @@ def test_seed_sets_init():
     assert not torch.equal(saved, build_model("frozen", 3, pretrained=False).state_dict()["conv1.weight"])
 
 
-# ---------- experiments.py / analyze.py ----------
 
 def test_runs_table():
     assert len(RUNS) == 11 and len(set(RUNS)) == 11
@@ -261,7 +255,7 @@ def test_pending_runs():
 
 def test_summarize():
     d = TMP / "sum"
-    for m in METHODS:  # copy the 1-epoch runs from test_train_run_all_methods
+    for m in METHODS:  # copy the 1 epoch runs from test_train_run_all_methods
         shutil.copytree(TMP / m, d / run_name(m, True, None))
     rows = summarize(d)
     assert [r["run"] for r in rows] == ["finetune_aug_all", "frozen_aug_all", "scratch_aug_all"]
@@ -278,7 +272,6 @@ def test_confusions():
     assert ("X", 1 / 3, 3) in acc
 
 
-# ---------- refine.py ----------
 
 def test_combined_changes():
     val = {"base": 0.90, "noaug": 0.89, "cosine30": 0.91, "smooth": 0.92, "whitefill": 0.95,
@@ -286,7 +279,7 @@ def test_combined_changes():
     ch = combined_changes(val)
     assert ch == {"arch": "efficientnet_b0", "cosine": True, "epochs": 30, "patience": None,
                   "label_smoothing": 0.1, "rot_fill": 255}
-    # augmentation off wins -> rotation fill is meaningless and dropped; base arch kept
+    # aug off wins so rotation fill doesn't mean anything and gets dropped, base arch kept
     val2 = {**val, "noaug": 0.99, "effb0": 0.5, "whitefill": 0.95}
     assert combined_changes(val2) == {"aug": False, "cosine": True, "epochs": 30, "patience": None,
                                       "label_smoothing": 0.1}
@@ -310,7 +303,7 @@ def test_suspect_labels():
 def test_confused_classes():
     from analyze import confused_classes
     preds = [["a", 0, 1], ["b", 0, 1], ["c", 3, 2], ["f", 3, 2], ["d", 4, 4], ["e", 1, 0]]
-    assert confused_classes(preds, n=2) == [0, 1, 2, 3]  # every class in the top-2 pairs, sorted
+    assert confused_classes(preds, n=2) == [0, 1, 2, 3]  # every class is in the top 2 pairs, sorted
     assert confused_classes(preds, n=1) == [0, 1]
 
 
@@ -319,7 +312,7 @@ def test_predict_image():
     model = build_model("scratch", len(CLASSES), pretrained=False)
     img = class_root() / "Abra" / "0.jpg"
     top = predict_image(img, model, CLASSES, torch.device("cpu"), k=5)
-    assert len(top) == 3  # k is capped at the number of classes
+    assert len(top) == 3  # k gets capped at the number of classes
     assert sorted(n for n, _ in top) == sorted(CLASSES)
     probs = [p for _, p in top]
     assert probs == sorted(probs, reverse=True) and abs(sum(probs) - 1) < 1e-5

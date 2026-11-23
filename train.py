@@ -1,6 +1,6 @@
-"""Train and test one configuration.
+"""trains and tests one setup
 
-Example: .venv/Scripts/python train.py --method finetune --aug on --per-class all
+example: .venv/Scripts/python train.py --method finetune --aug on --per-class all
 """
 import argparse
 import copy
@@ -10,7 +10,7 @@ import random
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # save plots to files, no window
+matplotlib.use("Agg")  # save plots to files, no window popping up
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -30,7 +30,6 @@ def run_name(method: str, aug: bool, per_class: int | None) -> str:
 
 @torch.no_grad()
 def predict(model: nn.Module, loader: DataLoader, device) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return (logits, true labels) for every image in the loader."""
     model.eval()
     logits, labels = [], []
     for x, y in loader:
@@ -63,16 +62,16 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
               pretrained: bool = True, seed: int = SEED, arch: str = "resnet18",
               label_smoothing: float = 0.0, cosine: bool = False, rot_fill: int = 0,
               name: str | None = None) -> dict:
-    """Train one model, keep the epoch with the best validation top-1, then score it on the test set.
+    """trains one model, keeps the epoch with the best val top-1, then tests it.
 
-    patience=None trains all epochs. cosine=True lowers every learning rate along a cosine curve
-    to ~0 by the last epoch. The defaults reproduce the original 11 experiments.
+    patience=None trains every epoch. cosine=True lowers all the learning rates along a cosine curve
+    down to ~0 by the last epoch. the defaults are what the original 11 experiments used.
     """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     num_classes = len(splits["classes"])
-    model = build_model(method, num_classes, pretrained, arch)  # right after seeding: same init per seed
+    model = build_model(method, num_classes, pretrained, arch)  # right after seeding so each seed gets the same init
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
@@ -91,7 +90,7 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
     name = name or run_name(method, aug, per_class)
 
     for epoch in range(1, epochs + 1):
-        lr = optimizer.param_groups[-1]["lr"]  # the new head's learning rate this epoch
+        lr = optimizer.param_groups[-1]["lr"]  # the new head's lr this epoch
         set_train_mode(model, method)
         total_loss = 0.0
         for x, y in train_loader:
@@ -117,7 +116,7 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
                 print(f"[{name}] early stop: no improvement for {patience} epochs", flush=True)
                 break
 
-    model.load_state_dict(best_state)  # test the best-on-validation weights, not the last ones
+    model.load_state_dict(best_state)  # test the best val weights, not the last epoch
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     torch.save(best_state, out_dir / "best.pt")
@@ -137,12 +136,12 @@ def train_run(method: str, aug: bool, per_class: int | None, splits: dict, out_d
         "classes": splits["classes"],
         "test_predictions": [[p, int(t), int(q)] for (p, _), t, q
                              in zip(splits["test"], y_true.tolist(), preds.tolist())],
-        # model's confidence (softmax probability) in its own answer, per test image
+        # how confident the model is in its own answer, per test image
         "test_confidence": logits.softmax(dim=1).max(dim=1).values.tolist(),
     }
     save_curves(history, out_dir / "curves.png", name)
-    # metrics.json marks a run as finished, so write it last and atomically (temp file + rename):
-    # an interrupted run never leaves a half-written metrics.json behind.
+    # metrics.json is what marks a run as done, so write it last and atomically (temp file + rename).
+    # that way a run that gets interrupted never leaves a half written one behind
     tmp = out_dir / "metrics.json.tmp"
     tmp.write_text(json.dumps(metrics, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, out_dir / "metrics.json")

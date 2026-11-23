@@ -1,8 +1,8 @@
-"""Name the Pokémon in one or more images with a trained model (for a live demo).
+"""names the pokemon in one or more images using a trained model
 
-Run: .venv/Scripts/python predict.py my_image.png other.jpg
+run: .venv/Scripts/python predict.py my_image.png other.jpg
      .venv/Scripts/python predict.py my_image.png --run finetune_aug_all
-Default model: the final refined one, results/refine/cosine30_s42.
+uses the final model (results/refine/cosine30_s42) by default
 """
 import argparse
 import json
@@ -16,7 +16,6 @@ from train import RESULTS_DIR
 
 @torch.no_grad()
 def predict_image(path, model, classes: list, device, k: int = 5) -> list[tuple[str, float]]:
-    """Top-k (species, probability), most likely first."""
     model.eval()
     x = build_transform(train=False, aug=False)(load_image(path))[None].to(device)
     probs = model(x).float().softmax(dim=1)[0].cpu()
@@ -25,9 +24,8 @@ def predict_image(path, model, classes: list, device, k: int = 5) -> list[tuple[
 
 
 def load_trained(run: str, device):
-    """Rebuild the model a run trained (method, backbone, classes) and load its best weights."""
     m = json.loads((RESULTS_DIR / run / "metrics.json").read_text(encoding="utf-8"))
-    model = build_model(m["method"], len(m["classes"]), pretrained=False, arch=m.get("config", {}).get("arch", "resnet18"))  # the first 11 runs predate "config"
+    model = build_model(m["method"], len(m["classes"]), pretrained=False, arch=m.get("config", {}).get("arch", "resnet18"))  # the first 11 runs don't have "config"
     model.load_state_dict(torch.load(RESULTS_DIR / run / "best.pt", map_location=device))
     return model.to(device), m["classes"]
 

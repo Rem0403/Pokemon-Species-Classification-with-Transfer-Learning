@@ -1,7 +1,7 @@
-"""Run every experiment from the proposal, then build summary.csv and comparison charts.
+"""runs every experiment from the proposal then makes summary.csv and the charts
 
-Run: .venv/Scripts/python experiments.py
-Finished runs (results/<run>/metrics.json exists) are skipped, so it is safe to restart.
+run: .venv/Scripts/python experiments.py
+runs that already finished (have a metrics.json) get skipped so you can restart it whenever
 """
 import csv
 import json
@@ -15,13 +15,13 @@ import numpy as np
 from data import load_splits
 from train import RESULTS_DIR, run_name, train_run
 
-# (method, augmentation on?, images per class: None = all)
+# (method, augmentation on?, images per class, None = all of them)
 RUNS = [
-    # 1. Training method: how much does transfer learning help?
+    # 1. training method
     ("scratch", True, None), ("frozen", True, None), ("finetune", True, None),
-    # 2. Augmentation off (compare with the "on" runs above)
+    # 2. augmentation off
     ("scratch", False, None), ("finetune", False, None),
-    # 3. Data amount: 10 and 20 images per class (plus "all" above)
+    # 3. less data, 10 and 20 per class
     ("scratch", True, 10), ("frozen", True, 10), ("finetune", True, 10),
     ("scratch", True, 20), ("frozen", True, 20), ("finetune", True, 20),
 ]
@@ -41,7 +41,6 @@ def _bar_labels(ax, bars):
 
 
 def summarize(results_dir: Path = RESULTS_DIR) -> list[dict]:
-    """Write summary.csv and the three comparison charts from every finished run."""
     results_dir = Path(results_dir)
     runs = {}
     for f in sorted(results_dir.glob("*/metrics.json")):
@@ -57,7 +56,6 @@ def summarize(results_dir: Path = RESULTS_DIR) -> list[dict]:
     def get(method, aug, k):
         return runs.get(run_name(method, aug, k))
 
-    # Chart 1: training method (aug on, all data)
     methods = [m for m in METHOD_ORDER if get(m, True, None)]
     if methods:
         fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -73,7 +71,6 @@ def summarize(results_dir: Path = RESULTS_DIR) -> list[dict]:
         fig.savefig(results_dir / "method_comparison.png", dpi=130)
         plt.close(fig)
 
-    # Chart 2: augmentation on vs off
     methods = [m for m in METHOD_ORDER if get(m, True, None) and get(m, False, None)]
     if methods:
         fig, ax = plt.subplots(figsize=(6, 4.5))
@@ -87,8 +84,8 @@ def summarize(results_dir: Path = RESULTS_DIR) -> list[dict]:
         fig.savefig(results_dir / "augmentation.png", dpi=130)
         plt.close(fig)
 
-    # Chart 3: data amount. x = mean training images per class actually used
-    # (the "20" setting is capped at ~18 for the smallest classes, "all" is ~32).
+    # chart 3: x is the avg images per class that actually got used
+    # (the 20 setting caps out around 18 for the smallest classes, all is ~32)
     fig, ax = plt.subplots(figsize=(7, 4.5))
     drew = False
     for m in METHOD_ORDER:

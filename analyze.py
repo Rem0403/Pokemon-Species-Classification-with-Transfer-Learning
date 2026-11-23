@@ -1,10 +1,10 @@
-"""Error analysis: which species does the model mix up?
+"""which pokemon does the model mix up?
 
-Run: .venv/Scripts/python analyze.py            (best "all data" run)
+run: .venv/Scripts/python analyze.py            (best "all data" run)
      .venv/Scripts/python analyze.py --run finetune_aug_all
      .venv/Scripts/python analyze.py --run refine/cosine30_s42   (final model)
-Output: results/analysis/<run>/
-Uses the test predictions saved by train.py, so no GPU or retraining is needed.
+saves to results/analysis/<run>/
+uses the test predictions train.py already saved so no gpu or retraining needed
 """
 import argparse
 import csv
@@ -24,20 +24,17 @@ OUT_DIR = RESULTS_DIR / "analysis"
 
 
 def top_confusions(preds: list, classes: list, n: int = 10) -> list[tuple[str, str, int]]:
-    """Most frequent (true species, predicted species, count) among wrong predictions."""
     counts = Counter((classes[t], classes[p]) for _, t, p in preds if t != p)
     return [(t, p, c) for (t, p), c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))][:n]
 
 
 def confused_classes(preds: list, n: int = 10) -> list[int]:
-    """Sorted indices of every class in the n most frequent (true, predicted) mistakes."""
     counts = Counter((t, p) for _, t, p in preds if t != p)
     top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
     return sorted({c for pair, _ in top for c in pair})
 
 
 def per_class_accuracy(preds: list, classes: list) -> list[tuple[str, float, int]]:
-    """(species, test accuracy, number of test images), worst first."""
     total, right = Counter(), Counter()
     for _, t, p in preds:
         total[t] += 1
@@ -46,8 +43,7 @@ def per_class_accuracy(preds: list, classes: list) -> list[tuple[str, float, int
 
 
 def suspect_labels(m: dict, min_conf: float = 0.9) -> list[tuple[str, str, str, float]]:
-    """Test images the model gets wrong while being very sure: (path, label, prediction, confidence),
-    most confident first. These are the best candidates for mislabeled images."""
+    """test images it gets wrong while being really sure, most sure first. these are probably mislabeled"""
     classes = m["classes"]
     rows = [(path, classes[t], classes[p], conf)
             for (path, t, p), conf in zip(m["test_predictions"], m["test_confidence"])
@@ -56,8 +52,6 @@ def suspect_labels(m: dict, min_conf: float = 0.9) -> list[tuple[str, str, str, 
 
 
 def plot_pairs(rows: list[tuple[str, str, str]], out_path: Path) -> None:
-    """One row per (image path, left title, predicted species): the image next to a training
-    example of the predicted species."""
     classes_train = {}
     s = load_splits()
     for path, label in s["train"]:
@@ -89,11 +83,10 @@ def main():
     run = ap.parse_args().run or best_run()
     m = json.loads((RESULTS_DIR / run / "metrics.json").read_text(encoding="utf-8"))
     classes, preds = m["classes"], m["test_predictions"]
-    out = OUT_DIR / Path(run).name  # e.g. results/analysis/cosine30_s42
+    out = OUT_DIR / Path(run).name
     out.mkdir(parents=True, exist_ok=True)
     print(f"Analyzing {run}: test top-1 {m['test_top1']:.3f}")
 
-    # Confusion matrix (rows = true species, columns = predicted)
     n = len(classes)
     cm = np.zeros((n, n), dtype=int)
     for _, t, p in preds:
@@ -107,7 +100,7 @@ def main():
     fig.savefig(out / "confusion_matrix.png", dpi=150)
     plt.close(fig)
 
-    # Readable zoom: only the species involved in the 10 most frequent mistakes.
+    # zoomed in version, only the species from the top 10 mistakes
     idx = confused_classes(preds, 10)
     if idx:
         sub = cm[np.ix_(idx, idx)]
@@ -136,8 +129,6 @@ def main():
         w.writerow(["species", "accuracy", "n_test"])
         w.writerows((s, f"{a:.3f}", k) for s, a, k in per_class_accuracy(preds, classes))
 
-    # Picture of each confused pair: a misclassified test image next to a real example of
-    # the species the model guessed.
     if pairs:
         idx = {c: i for i, c in enumerate(classes)}
         rows = [(next(path for path, tt, pp in preds if tt == idx[t] and pp == idx[p]),

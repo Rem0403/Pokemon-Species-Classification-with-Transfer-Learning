@@ -44,6 +44,7 @@ Without an NVIDIA GPU, install torch with plain `pip install torch torchvision`.
 | `.venv\Scripts\python analyze.py` | Error analysis on the best all-data run (`--run refine/cosine30_s42` for the final model) | `results/analysis/<run>/` |
 | `.venv\Scripts\python refine.py` | Optional. Tries changes to the fine-tuned model (3 seeds each, picked on validation only), retrains scratch/frozen for up to 60 epochs, and lists likely mislabeled test images (several hours, restartable) | `results/refine/`, see `FINDINGS.md` |
 | `.venv\Scripts\python predict.py <image> ...` | Names the Pokémon in your own images: top-5 species with confidence (final model by default) | printed |
+| `.venv\Scripts\python demo.py` | Desktop window: click "Open image…", pick a picture, see it with the top-5 species (final model) | window |
 
 To train a single configuration, for example: `.venv\Scripts\python train.py --method finetune --aug on --per-class 10`
 

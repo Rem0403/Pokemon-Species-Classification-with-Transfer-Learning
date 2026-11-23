@@ -1,6 +1,6 @@
-"""Proposal prep step 1: count images per class, list bad files and duplicates, show 20 random images.
+"""quick look at the dataset: images per class, bad files, duplicates, and 20 random pics
 
-Run: .venv/Scripts/python inspect_data.py
+run: .venv/Scripts/python inspect_data.py
 """
 import random
 import statistics
